@@ -1,4 +1,4 @@
-from fastapi import FastAPI
+from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from dotenv import load_dotenv
@@ -9,7 +9,8 @@ load_dotenv()
 HF_API_KEY = os.getenv("HUGGINGFACE_API_KEY")
 
 SUMMARIZATION_MODEL = "facebook/bart-large-cnn"
-REPLY_MODEL = "tiiuae/falcon-rw-1b"
+REPLY_MODEL = "tiiuae/falcon-7b-instruct"
+
 
 app = FastAPI()
 
@@ -66,20 +67,19 @@ def generate_response(complaint: Complaint):
     try:
         response = requests.post(url, headers=headers, json=payload)
 
+        print("Status code:", response.status_code)
+        print("Content-Type:", response.headers.get("Content-Type", ""))
+        print("Raw text:", response.text)
+
         if "application/json" not in response.headers.get("Content-Type", ""):
-            print("RAW response text:", response.text)
-            raise HTTPException(status_code=502, detail="Non-JSON response from Hugging Face")
+            raise HTTPException(status_code=502, detail=f"Non-JSON response from Hugging Face: {response.text}")
 
         output = response.json()
-        print("Parsed output:", output)
 
-        # Dialog models return generated_text
         if isinstance(output, list) and 'generated_text' in output[0]:
-            reply = output[0]['generated_text']
-            return {"response": reply}
+            return {"response": output[0]['generated_text']}
         else:
-            raise HTTPException(status_code=500, detail="Unexpected response output format")
+            raise HTTPException(status_code=500, detail="Unexpected response format.")
 
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Error during response generation: {str(e)}")
-
+        raise HTTPException(status_code=500, detail=f"Error during response generation: {e}")
