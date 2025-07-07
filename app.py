@@ -5,13 +5,11 @@ from dotenv import load_dotenv
 import os
 import requests
 
-# Load .env
 load_dotenv()
 HF_API_KEY = os.getenv("HUGGINGFACE_API_KEY")
 
-# Smaller free models
-SUMMARIZATION_MODEL = "google/flan-t5-small"
-REPLY_MODEL = "google/flan-t5-small"
+SUMMARIZATION_MODEL = "facebook/bart-large-cnn"
+REPLY_MODEL = "tiiuae/falcon-rw-1b"
 
 app = FastAPI()
 
@@ -37,14 +35,26 @@ def summarize(complaint: Complaint):
     headers = {"Authorization": f"Bearer {HF_API_KEY}"}
     prompt = f"Summarize this: {complaint.text}"
     payload = {"inputs": prompt}
-    response = requests.post(url, headers=headers, json=payload)
 
-    if response.status_code == 200:
+    try:
+        response = requests.post(url, headers=headers, json=payload)
+
+        # Check content type before parsing
+        if "application/json" not in response.headers.get("Content-Type", ""):
+            raise HTTPException(status_code=502, detail="Non-JSON response from Hugging Face")
+
         output = response.json()
-        summary = output[0]['generated_text']
-        return {"summary": summary}
-    else:
-        return {"error": response.json()}
+
+        # Hugging Face summarizers return summary_text, not generated_text
+        if isinstance(output, list) and 'summary_text' in output[0]:
+            summary = output[0]['summary_text']
+            return {"summary": summary}
+        else:
+            raise HTTPException(status_code=500, detail="Unexpected summarization output format")
+
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Error during summarization: {str(e)}")
+
 
 @app.post("/generate-response")
 def generate_response(complaint: Complaint):
@@ -52,11 +62,24 @@ def generate_response(complaint: Complaint):
     headers = {"Authorization": f"Bearer {HF_API_KEY}"}
     prompt = f"Write a short, polite, professional reply to this customer complaint: {complaint.text}"
     payload = {"inputs": prompt}
-    response = requests.post(url, headers=headers, json=payload)
 
-    if response.status_code == 200:
+    try:
+        response = requests.post(url, headers=headers, json=payload)
+
+        if "application/json" not in response.headers.get("Content-Type", ""):
+            print("RAW response text:", response.text)
+            raise HTTPException(status_code=502, detail="Non-JSON response from Hugging Face")
+
         output = response.json()
-        reply = output[0]['generated_text']
-        return {"response": reply}
-    else:
-        return {"error": response.json()}
+        print("Parsed output:", output)
+
+        # Dialog models return generated_text
+        if isinstance(output, list) and 'generated_text' in output[0]:
+            reply = output[0]['generated_text']
+            return {"response": reply}
+        else:
+            raise HTTPException(status_code=500, detail="Unexpected response output format")
+
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Error during response generation: {str(e)}")
+
